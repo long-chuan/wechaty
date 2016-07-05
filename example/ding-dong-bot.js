@@ -32,7 +32,7 @@ var querystring = require('querystring')
 var wxurl = 'http://45.113.70.237:8079/WeiXinServer/openWeChatServer';
 
 console.log(welcome)
-const bot = new Wechaty({ session: 'example-bot.wechaty.json' })
+const bot = new Wechaty({ profile: 'example-bot.wechaty.json' })
 
 bot
 .on('login'	  , user => {
@@ -44,7 +44,6 @@ bot
   loginname = ''
 })
 .on('scan', ({url, code}) => {
-  console.log(`Scan QR Code in url to login: ${code}\n${url}`)
   if (!/201|200/.test(code)) {
     //调用接口
     console.log('开始调用接口')
@@ -58,6 +57,7 @@ bot
     })
     require('qrcode-terminal').generate(loginUrl)
   }
+  console.log(`${url}\n[${code}] Scan QR Code in above url to login: `)
 })
 .on('message', m => {
   m.ready()
@@ -70,7 +70,7 @@ bot
       console.log("body:" + body ); 
     })
 
-    if (/^(ding|ping|bing)$/i.test(m.get('content')) && !m.self()) {
+    if (/^(ding|ping|bing)$/i.test(m.get('content')) && !bot.self(m)) {
       bot.reply(m, 'dong')
       .then(() => { log.warn('Bot', 'REPLY: dong') })
     }

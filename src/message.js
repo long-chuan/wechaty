@@ -34,8 +34,6 @@ class Message {
       , status:       rawObj.Status
       , digest:       rawObj.MMDigest
       , date:         rawObj.MMDisplayTime  // Javascript timestamp of milliseconds
-
-      , self:         undefined // to store the logined user id
     }
 
     // FIXME: has ther any better method to know the room ID?
@@ -83,22 +81,14 @@ class Message {
     return '\"msgtype\":\"' + this.type() + '\",\"msg\":\"' + content + '\"'
   }
 
-  from()    { return this.obj.from }
-  to()      { return this.obj.to }
+  from()    { return Contact.load(this.obj.from) }
+  to()      { return Contact.load(this.obj.to) }
   content() { return this.obj.content }
-  room()    { return this.obj.room }
+  room()    { return Room.load(this.obj.room) }
 
   type()    { return this.obj.type }
   typeEx()  { return Message.Type[this.obj.type] }
   count()   { return Message.counter }
-
-  self()    {
-    if (!this.obj.self) {
-      log.warn('Message', 'self not set')
-      return false
-    }
-    return this.obj.self === this.obj.from
-  }
 
   ready() {
     log.silly('Message', 'ready()')

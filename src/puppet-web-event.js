@@ -34,42 +34,48 @@ const Browser = require('./puppet-web-browser')
 const Bridge  = require('./puppet-web-bridge')
 
 const PuppetWebEvent = {
-  onBrowserDead: onBrowserDead
+  onBrowserDead
 
-  , onServerLogin: onServerLogin
-  , onServerLogout: onServerLogout
+  , onServerLogin
+  , onServerLogout
 
-  , onServerConnection: onServerConnection
-  , onServerDisconnect: onServerDisconnect
+  , onServerConnection
+  , onServerDisconnect
 
-  , onServerDing: onServerDing
-  , onServerScan: onServerScan
-  , onServerUnload: onServerUnload
-  , onServerLog: onServerLog
+  , onServerDing
+  , onServerScan
+  , onServerUnload
+  , onServerLog
 
-  , onServerMessage: onServerMessage
+  , onServerMessage
 }
 
 function onBrowserDead(e) {
-  log.verbose('PuppetWebEvent', 'onBrowserDead()')
+  log.verbose('PuppetWebEvent', 'onBrowserDead(%s)', e)
   // because this function is async, so maybe entry more than one times.
-  // guard by variable: onBrowserBirthing to prevent the 2nd time entrance.
-  if (this.onBrowserBirthing) {
-    log.warn('PuppetWebEvent', 'onBrowserDead() Im busy, dont call me again before I return. this time will return and do nothing')
-    return
-  }
-  this.onBrowserBirthing = true
-
-  const TIMEOUT = 180000 // 180s / 3m
-  this.watchDog(`onBrowserDead() set a timeout of ${Math.floor(TIMEOUT/1000)} seconds to prevent unknown state change`, {timeout: TIMEOUT})
-
-  log.verbose('PuppetWebEvent', 'onBrowserDead(%s)', e.message || e)
-  if (!this.browser || !this.bridge) {
-    log.error('PuppetWebEvent', 'onBrowserDead() browser or bridge not found. do nothing')
-    return
+  // guard by variable: isBrowserBirthing to prevent the 2nd time entrance.
+  if (this.isBrowserBirthing) {
+    if (this.isBrowserBirthing === true) {
+      log.warn('PuppetWebEvent', 'onBrowserDead() Im busy, dont call me again before I return. this time will return and do nothing')
+      return
+    } else {
+      log.warn('PuppetWebEvent', 'onBrowserDead() Im FAKE busy? isBrowserBirthing is not boolean true!')
+    }
   }
 
   return co.call(this, function* () {
+    log.warn('PuppetWebEvent', 'onBrowserDead() co() set isBrowserBirthing true')
+    this.isBrowserBirthing = true
+
+    const TIMEOUT = 180000 // 180s / 3m
+    this.watchDog(`onBrowserDead() set a timeout of ${Math.floor(TIMEOUT / 1000)} seconds to prevent unknown state change`, {timeout: TIMEOUT})
+
+    log.verbose('PuppetWebEvent', 'onBrowserDead(%s)', e.message || e)
+    if (!this.browser || !this.bridge) {
+      log.error('PuppetWebEvent', 'onBrowserDead() browser or bridge not found. do nothing')
+      throw new Error('no browser or no bridge')
+    }
+
     log.verbose('PuppetWebEvent', 'onBrowserDead() try to reborn browser')
 
     yield this.browser.quit()
@@ -78,10 +84,11 @@ function onBrowserDead(e) {
     })
     log.verbose('PuppetWebEvent', 'old browser quited')
 
-    yield this.initBrowser()
+    this.browser = yield this.initBrowser()
     log.verbose('PuppetWebEvent', 'new browser inited')
 
-    yield this.bridge.init()
+    // this.bridge = yield this.bridge.init()
+    this.bridge = yield this.initBridge()
     log.verbose('PuppetWebEvent', 'bridge re-inited')
 
     const dong = yield this.ding()
@@ -95,11 +102,11 @@ function onBrowserDead(e) {
     log.error('PuppetWebEvent', 'onBrowserDead() exception: %s', e.message)
 
     log.warn('PuppetWebEvent', 'onBrowserDead() try to re-init PuppetWeb itself')
-    return this.quit().then(() => this.init())
+    return this.quit().then(_ => this.init())
   })
   .then(() => { // Finally
     log.verbose('PuppetWebEvent', 'onBrowserDead() new browser borned')
-    this.onBrowserBirthing = false
+    this.isBrowserBirthing = false
   })
 }
 
@@ -114,10 +121,14 @@ function onServerScan(data) {
   /**
    * When wx.qq.com push a new QRCode to Scan, there will be cookie updates(?)
    */
-  if (this.session) {
-     this.browser.saveSession(this.session)
-     .catch(() => {/* fail safe */})
-   }
+  this.browser.saveSession()
+      .catch(() => {/* fail safe */})
+
+  if (this.userId) {
+    log.verbose('PuppetWebEvent', 'onServerScan() there has userId when got a scan event. emit logout and set userId to null')
+    this.emit('logout', this.user || this.userId)
+    this.userId = this.user = null
+  }
 
   // feed watchDog a `scan` type of food
   this.watchDog(data, {type: 'scan'})
@@ -131,6 +142,14 @@ function onServerConnection(data) {
 
 function onServerDisconnect(data) {
   log.verbose('PuppetWebEvent', 'onServerDisconnect: %s', data)
+
+  if (this.userId) {
+    log.verbose('PuppetWebEvent', 'onServerDisconnect() there has userId set. emit a logout event and set userId to null')
+    this.emit('logout', this.user || this.userId ) //'onServerDisconnect(' + data + ')')
+    this.userId = null
+    this.user = null
+  }
+
   /**
    * conditions:
    * 1. browser crash(i.e.: be killed)
@@ -199,30 +218,40 @@ function onServerUnload(data) {
 }
 
 function onServerLog(data) {
-  log.verbose('PuppetWebEvent', 'onServerLog: %s', data)
+  log.verbose('PuppetWebEvent', 'onServerLog(%s)', data)
 }
 
-function onServerLogin(data) {
+function onServerLogin(data, attempt = 0) {
+  log.verbose('PuppetWebEvent', 'onServerLogin(%s, %d)', data, attempt)
+
+  if (this.userId) {
+    log.verbose('PuppetWebEvent', 'onServerLogin() be called but with userId set?')
+  }
+
   co.call(this, function* () {
     // co.call to make `this` context work inside generator.
     // See also: https://github.com/tj/co/issues/274
-    const userName = yield this.bridge.getUserName()
-    if (!userName) {
-      log.verbose('PuppetWebEvent', 'onServerLogin: browser not full loaded, retry later.')
-      setTimeout(onServerLogin.bind(this), 500)
+
+    /**
+     * save login user id to this.userId
+     */
+    this.userId = yield this.bridge.getUserName()
+
+    if (!this.userId) {
+      log.verbose('PuppetWebEvent', 'onServerLogin: browser not full loaded(%d), retry later', attempt)
+      setTimeout(onServerLogin.bind(this, data, ++attempt), 500)
       return
     }
-    log.verbose('PuppetWebEvent', 'bridge.getUserName: %s', userName)
-    this.user = yield Contact.load(userName).ready()
+
+    log.verbose('PuppetWebEvent', 'bridge.getUserName: %s', this.userId)
+    this.user = yield Contact.load(this.userId).ready()
     log.verbose('PuppetWebEvent', `onServerLogin() user ${this.user.name()} logined`)
     this.emit('login', this.user)
 
-    if (this.session) {
-      yield this.browser.saveSession(this.session)
-      .catch(e => { // fail safe
-        log.warn('PuppetWebEvent', 'browser.saveSession exception: %s', e.message)
-      })
-    }
+    yield this.browser.saveSession()
+              .catch(e => { // fail safe
+                log.warn('PuppetWebEvent', 'onServerLogin() browser.saveSession exception: %s', e.message)
+              })
   }).catch(e => {
     log.error('PuppetWebEvent', 'onServerLogin() exception: %s', e.message)
   })
@@ -231,15 +260,17 @@ function onServerLogin(data) {
 function onServerLogout(data) {
   if (this.user) {
     this.emit('logout', this.user)
-    this.user = null
-  } else { log.verbose('PuppetWebEvent', 'onServerLogout() without this.user initialized') }
+  } else if (this.userId) {
+    this.emit('logout', this.userId)
+  } else { log.verbose('PuppetWebEvent', 'onServerLogout() without this.user or userId initialized') }
 
-  if (this.session) {
-    this.browser.cleanSession(this.session)
-    .catch(e => {
-      log.warn('PuppetWebEvent', 'onServerLogout() browser.cleanSession() exception: %s', e.message)
-    })
-  }
+  this.userId = null
+  this.user = null
+
+  // this.browser.cleanSession()
+  // .catch(e => { /* fail safe */
+  //   log.verbose('PuppetWebEvent', 'onServerLogout() browser.cleanSession() exception: %s', e.message)
+  // })
 }
 
 function onServerMessage(data) {
@@ -249,19 +280,21 @@ function onServerMessage(data) {
     case Message.Type.IMAGE:
       // log.verbose('PuppetWebEvent', 'onServerMessage() IMAGE message')
       m = new MediaMessage(data)
-      break;
+      break
 
     case 'TEXT':
     default:
       m = new Message(data)
-      break;
+      break
   }
 
-  if (this.user) {
-    m.set('self', this.user.id)
+  // To Be Deleted: set self...
+  if (this.userId) {
+    m.set('self', this.userId)
   } else {
-    log.warn('PuppetWebEvent', 'onServerMessage() without this.user')
+    log.warn('PuppetWebEvent', 'onServerMessage() without this.userId')
   }
+
   m.ready() // TODO: EventEmitter2 for video/audio/app/sys....
   .then(() => this.emit('message', m))
   .catch(e => {

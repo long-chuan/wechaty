@@ -7,12 +7,13 @@ const log = require('../src/npmlog-env')
 
 const PORT = process.env.WECHATY_PORT || 58788
 const HEAD = process.env.WECHATY_HEAD || false
-const SESSION = 'unit-test-session.wechaty.json'
+const PROFILE = 'unit-test-session.wechaty.json'
 
 const PuppetWeb = require('../src/puppet-web')
+const Message = require('../src/message')
 
 test('PuppetWeb smoke testing', function(t) {
-  let pw = new PuppetWeb({port: PORT, head: HEAD, session: SESSION})
+  let pw = new PuppetWeb({port: PORT, head: HEAD, profile: PROFILE})
   t.ok(pw, 'should instantiated a PuppetWeb')
 
   co(function* () {
@@ -55,15 +56,16 @@ test('PuppetWeb smoke testing', function(t) {
 })
 
 test('Puppet Web server/browser communication', function(t) {
-  let pw = new PuppetWeb({port: PORT, head: HEAD, session: SESSION})
+  let pw = new PuppetWeb({port: PORT, head: HEAD, profile: PROFILE})
   t.ok(pw, 'should instantiated a PuppetWeb')
 
-  const EXPECTED_DING_DATA='dingdong'
+  const EXPECTED_DING_DATA = 'dingdong'
 
   co(function* () {
     yield pw.init()
     t.pass('should be inited')
 
+log.level = 'silly'
     const retSocket = yield dingSocket(pw.server)
     t.equal(retSocket,  EXPECTED_DING_DATA, 'should got EXPECTED_DING_DATA after resolved dingSocket()')
   })
@@ -74,6 +76,8 @@ test('Puppet Web server/browser communication', function(t) {
   .then(r => {                // Finally
     pw.quit()
     .then(t.end)
+
+log.level = 'info'
   })
   .catch(e => { t.fail(e) })  // Exception
 
@@ -110,73 +114,15 @@ test('Puppet Web server/browser communication', function(t) {
   }
 })
 
-test('Puppet Web watchdog timer', function(t) {
-  const pw = new PuppetWeb({port: PORT, head: HEAD, session: SESSION})
-  t.ok(pw, 'should instantiate a PuppetWeb')
+test('Puppet Web Self Message Identification', function(t) {
+  const p = new PuppetWeb({port: PORT, head: HEAD, profile: PROFILE})
+  t.ok(p, 'should instantiated a PuppetWeb')
 
-  co(function* () {
-    yield pw.initBrowser()
-    t.pass('should init the browser')
-    yield pw.initBridge()
-    t.pass('should init the bridge')
+  const EXPECTED_USER_ID = 'zixia'
+  p.userId = EXPECTED_USER_ID
+  const m = new Message()
+  m.set('from', EXPECTED_USER_ID)
+  t.ok(p.self(m), 'should identified self for message which from is self')
 
-    yield pw.bridge.quit().catch(e => {/* fail safe */})
-    yield pw.browser.quit().catch(e => {/* fail safe */})
-    t.pass('should kill both browser & bridge')
-
-    pw.once('error', e => {
-      t.ok(/watchdog reset/i.test(e.message), 'should get event[error] after watchdog timeout')
-    })
-    pw.watchDog('feed_and_active_it', {timeout: 1})
-    yield new Promise((resolve) => setTimeout(() => resolve(), 2)) // wait untill reset
-    t.pass('should feed the watchdog and had already fireed a reset above')
-
-    pw.once('error', e => t.fail('waitDing() triggered watchDogReset()'))
-
-    const EXPECTED_DING_DATA = 'dingdong'
-    pw.watchDog('feed to extend the dog life')
-    const dong = yield waitDing(EXPECTED_DING_DATA)
-    t.equal(dong, EXPECTED_DING_DATA, 'should get EXPECTED_DING_DATA from ding after watchdog reset')
-  })
-  .catch(e => { // Exception
-    t.fail('co exception: ' + e.message)
-  })
-  .then(() => { // Finally
-    pw.quit()
-    .then(t.end)
-  })
-
-  return
-  /////////////////////////////////////////////////////////////////////////////
-  function waitDing(data) {
-    const max = 7
-    const backoff = 2000
-
-    // max = (2*totalTime/backoff) ^ (1/2)
-    // timeout = 11,250 for {max: 15, backoff: 100}
-    // timeout = 45,000 for {max: 30, backoff: 100}
-    // timeout = 49,000 for {max: 7, backoff: 2000}
-    const timeout = max * (backoff * max) / 2
-
-    return retryPromise({ max: max, backoff: backoff }, function (attempt) {
-      log.silly('TestPuppetWeb', 'waitDing() retryPromise: attampt %s/%s time for timeout %s'
-        , attempt, max, timeout)
-      return pw.ding(data)
-      .then(r => {
-        if (!r) {
-          throw new Error('got empty return')
-        } else {
-          return r
-        }
-      })
-      .catch(e => {
-        log.verbose('TestPuppetWeb', 'waitDing() exception: %s', e.message)
-        throw e
-      })
-    })
-    .catch(e => {
-      log.error('TestPuppetWeb', 'retryPromise() waitDing() finally FAIL: %s', e.message)
-      throw e
-    })
-  }
+  t.end()
 })

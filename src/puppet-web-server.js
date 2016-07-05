@@ -39,9 +39,10 @@ class Server extends EventEmitter {
         , r => resolve(r), e => reject(e)
       )
       this.socketServer = this.createSocketIo(this.httpsServer)
-    }).then(r => {
+
       log.verbose('PuppetWebServer', 'full init()-ed')
-      return true
+
+      return this
     }).catch(e => {
       log.error('PuppetWebServer', 'init() exception: %s', e.message)
       throw e
@@ -130,7 +131,7 @@ class Server extends EventEmitter {
       , 'ding'
     ].map(e => {
       client.on(e, data => {
-        log.silly('PuppetWebServer', `initEventsFromClient() forward client event[${e}](${data}) from browser by emit it`)
+        // log.silly('PuppetWebServer', `initEventsFromClient() forward client event[${e}](${data}) from browser by emit it`)
         this.emit(e, data)
       })
     })
